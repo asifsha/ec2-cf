@@ -86,7 +86,7 @@ jobs:
 
           echo "Deploying stack..."
           aws cloudformation deploy \
-          --stack-name MyAppStack \
+          --stack-name $STACK_NAME \
           --template-file main.yaml \
           --capabilities CAPABILITY_NAMED_IAM \
           --parameter-overrides \

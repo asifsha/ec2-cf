@@ -118,8 +118,8 @@ Outputs:
     Value: !GetAtt VPCStack.Outputs.VPCId
   NLBDNSName:
     Value: !GetAtt LoadBalancerStack.Outputs.NLBEndpoint
-  AppASGName:
-    Value: !GetAtt AppASGStack.Outputs.ASGName
+  AppServerASGName:
+    Value: !GetAtt AppASGStack.Outputs.AppServerASGName
   RDSPrimaryEndpoint:
     Value: !GetAtt RDSStack.Outputs.RDSPrimaryEndpoint
   StaticAssetsBucketName:
