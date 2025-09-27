@@ -1,0 +1,96 @@
+name: Deploy CloudFormation
+
+on:
+  push:
+    branches:
+      - main  # trigger on main branch pushes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials (OIDC or store secrets)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::412381746256:role/githubAccessECRECSRole
+          aws-region: ap-southeast-2
+
+      - name: Set bucket name
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION=$AWS_REGION
+          BUCKET="cf-templates-$ACCOUNT_ID-$REGION"
+          echo "BUCKET=$BUCKET" >> $GITHUB_ENV
+          echo "REGION=$REGION" >> $GITHUB_ENV
+          echo "Using bucket: $BUCKET in region $REGION"
+
+
+      # Ensure S3 bucket exists (create if missing)
+      - name: Ensure S3 bucket exists
+        run: |
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Bucket $BUCKET already exists"
+          else
+            echo "Creating bucket $BUCKET"
+            aws s3 mb s3://$BUCKET --region $REGION
+          fi
+
+      # Upload templates to S3
+      - name: Upload CloudFormation templates
+        run: |
+          aws s3 cp vpc.yaml s3://$BUCKET/
+          aws s3 cp rds.yaml s3://$BUCKET/
+          aws s3 cp app-asg.yaml s3://$BUCKET/
+          aws s3 cp alb-nlb.yaml s3://$BUCKET/
+          aws s3 cp s3-cloudfront.yaml s3://$BUCKET/
+          aws s3 cp security-groups.yaml s3://$BUCKET/
+          aws s3 cp main.yaml s3://$BUCKET/
+
+      - name: Debug secrets (mask safe)
+        run: |
+          if [ -z "${{ secrets.DB_PASSWORD }}" ]; then
+            echo "❌ DB_PASSWORD secret is missing"
+            exit 1
+          else
+            echo "✅ DB_PASSWORD secret is set"
+          fi
+
+
+      # Deploy/Update stack
+      - name: Deploy CloudFormation stack
+        run: |
+          set -e
+          STACK_NAME=MyAppStack
+
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name $STACK_NAME >/dev/null 2>&1; then
+            STATUS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].StackStatus" --output text)
+            echo "Stack $STACK_NAME status: $STATUS"
+
+            if [ "$STATUS" == "ROLLBACK_COMPLETE" ]; then
+              echo "Stack is in ROLLBACK_COMPLETE. Deleting..."
+              aws cloudformation delete-stack --stack-name $STACK_NAME
+              aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
+              echo "Stack deleted."
+            fi
+          fi
+
+          echo "Deploying stack..."
+          aws cloudformation deploy \
+          --stack-name MyAppStack \
+          --template-file main.yaml \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --parameter-overrides \
+            BucketName=$BUCKET \
+            DBUsername=masteruser \
+            DBPassword=${{ secrets.DB_PASSWORD }} \
+            InstanceType=t3.micro

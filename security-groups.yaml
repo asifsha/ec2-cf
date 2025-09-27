@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Security Groups for EC2, RDS, and NLB
+
+Parameters:
+  VPCId:
+    Type: String
+    Description: VPC ID where SGs will be created
+
+Resources:
+  ## Security Group for SSM Host
+  SSMHostSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSM access only
+      VpcId: !Ref VPCId
+      SecurityGroupIngress: []
+      Tags:
+        - Key: Name
+          Value: SSMHost-SG
+
+  ## Security Group for Application Server
+  AppServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound from NLB, outbound to RDS
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref NLBSG
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref NLBSG
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: AppServer-SG
+
+  ## Security Group for RDS
+  RDSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MariaDB access only from App Server + SSM Host
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref AppServerSG
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref SSMHostSG
+      Tags:
+        - Key: Name
+          Value: RDS-SG
+
+  ## Security Group for NLB
+  NLBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP/HTTPS from internet
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: NLB-SG
+
+Outputs:
+  SSMHostSGId:
+    Value: !Ref SSMHostSG
+    Export:
+      Name: SSMHostSGId
+
+  AppSGId:
+    Value: !Ref AppServerSG
+    Export:
+      Name: AppSGId
+
+  RDSSGId:
+    Value: !Ref RDSSG
+    Export:
+      Name: RDSSGId
+
+  NLBSGId:
+    Value: !Ref NLBSG
+    Export:
+      Name: NLBSGId

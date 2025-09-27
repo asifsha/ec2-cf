@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: S3 Bucket with CloudFront CDN for static assets (using OAC)
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: The custom domain for CloudFront (optional)
+    Default: ""
+
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN for HTTPS (must be in us-east-1 for CloudFront)
+    Default: ""
+
+Conditions:
+  HasCert: !Not [!Equals [!Ref CertificateArn, ""]]
+
+Resources:
+  ## S3 Bucket for static assets
+  StaticAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: StaticAssetsBucket
+
+  ## OAC (Origin Access Control) for CloudFront to access S3
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-OAC"
+        Description: !Sub "OAC for ${AWS::StackName} CloudFront"
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+
+  ## CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          TargetOriginId: S3Origin
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # AWS Managed-CachingOptimized
+          ViewerProtocolPolicy: redirect-to-https
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt StaticAssetsBucket.RegionalDomainName
+            S3OriginConfig: {} # OAC replaces OAI here
+            OriginAccessControlId: !Ref CloudFrontOAC
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          !If
+            - HasCert
+            - 
+              AcmCertificateArn: !Ref CertificateArn
+              SslSupportMethod: sni-only
+              MinimumProtocolVersion: TLSv1.2_2021
+            - !Ref "AWS::NoValue"
+        Aliases: !If
+          - HasCert
+          - [!Ref DomainName]
+          - !Ref "AWS::NoValue"
+
+  ## Bucket Policy (allow only CloudFront via OAC)
+  StaticAssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticAssetsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${StaticAssetsBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                aws:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}"
+    DependsOn: CloudFrontDistribution
+
+Outputs:
+  StaticAssetsBucketName:
+    Value: !Ref StaticAssetsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-StaticAssetsBucketName"
+
+  CloudFrontDistributionId:
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+
+  CloudFrontDomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDomainName"

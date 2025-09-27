@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RDS MariaDB (Primary + optional Read Replica)
+
+Parameters:
+  VPCId:
+    Type: String
+
+  PrivateSubnet1Id:
+    Type: String
+  PrivateSubnet2Id:
+    Type: String
+
+  RDSSGId:
+    Type: String
+
+  DBUsername:
+    Type: String
+    NoEcho: true
+    Default: admin
+    Description: Master database username
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Master database password
+
+Resources:
+  ## Subnet Group for RDS
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      Tags:
+        - Key: Name
+          Value: RDS-SubnetGroup
+
+  ## Parameter Group
+  ## ⚠️ Double-check that "mariadb10.6" is valid in your region:
+  ## aws rds describe-db-engine-versions --engine mariadb --query "DBEngineVersions[].DBParameterGroupFamily"
+  RDSParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: mariadb10.6
+      Description: Custom parameter group for MariaDB
+      Parameters:
+        max_connections: "150"
+
+  ## Primary MariaDB Instance
+  RDSPrimary:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Retain
+    Properties:
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-mariadb-primary"
+      DBName: MyAppDB
+      Engine: mariadb
+      EngineVersion: 10.6
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp2
+      MultiAZ: true
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !Ref RDSSGId
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      DBParameterGroupName: !Ref RDSParameterGroup
+      DeletionProtection: false
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: RDS-Primary
+
+  ## Read Replica (optional — uncomment after primary is stable)
+  # RDSReplica:
+  #   Type: AWS::RDS::DBInstance
+  #   Properties:
+  #     DBInstanceIdentifier: !Sub "${AWS::StackName}-mariadb-replica"
+  #     SourceDBInstanceIdentifier: !Ref RDSPrimary
+  #     DBInstanceClass: db.t3.micro
+  #     PubliclyAccessible: false
+  #     VPCSecurityGroups:
+  #       - !Ref RDSSGId
+  #     DBSubnetGroupName: !Ref RDSSubnetGroup
+  #     Tags:
+  #       - Key: Name
+  #         Value: RDS-Replica
+
+Outputs:
+  RDSPrimaryEndpoint:
+    Value: !GetAtt RDSPrimary.Endpoint.Address
+    Export:
+      Name: RDSPrimaryEndpoint
+
+  # Uncomment if you enable the replica
+  # RDSReplicaEndpoint:
+  #   Value: !Get

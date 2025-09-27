@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Main Orchestration Stack for Modular Infrastructure
+
+Parameters:
+  # Global
+  VpcCidr:
+    Type: String
+    Default: 192.168.0.0/16
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 192.168.1.0/24
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 192.168.2.0/24
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 192.168.10.0/24
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 192.168.20.0/24
+
+  DBUsername:
+    Type: String
+    Default: masteruser
+  DBPassword:
+    Type: String
+    NoEcho: true
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  DomainName:
+    Type: String
+    Default: ""
+  CertificateArn:
+    Type: String
+    Default: ""
+
+  BucketName:
+    Type: String
+    Description: S3 bucket containing nested stack templates
+
+Resources:
+  ## VPC Stack
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/vpc.yaml
+      Parameters:
+        VpcCidr: !Ref VpcCidr
+        PublicSubnet1Cidr: !Ref PublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref PublicSubnet2Cidr
+        PrivateSubnet1Cidr: !Ref PrivateSubnet1Cidr
+        PrivateSubnet2Cidr: !Ref PrivateSubnet2Cidr
+
+  ## Security Groups Stack
+  SecurityGroupsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/security-groups.yaml
+      Parameters:
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+
+  ## RDS Stack
+  RDSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/rds.yaml
+      Parameters:
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+        PrivateSubnet1Id: !GetAtt VPCStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt VPCStack.Outputs.PrivateSubnet2Id
+        RDSSGId: !GetAtt SecurityGroupsStack.Outputs.RDSSGId
+        DBUsername: !Ref DBUsername
+        DBPassword: !Ref DBPassword
+
+  ## App Auto Scaling Group
+  AppASGStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/app-asg.yaml
+      Parameters:
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+        PrivateSubnet1Id: !GetAtt VPCStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt VPCStack.Outputs.PrivateSubnet2Id
+        PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
+        AppSGId: !GetAtt SecurityGroupsStack.Outputs.AppSGId
+        InstanceType: !Ref InstanceType
+        RDSPrimaryEndpoint: !GetAtt RDSStack.Outputs.RDSPrimaryEndpoint
+        SSMHostSGId: !GetAtt SecurityGroupsStack.Outputs.SSMHostSGId
+
+  ## Load Balancer
+  LoadBalancerStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/alb-nlb.yaml
+      Parameters:
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+        PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
+        NLBSGId: !GetAtt SecurityGroupsStack.Outputs.NLBSGId
+        AppServerASGName: !GetAtt AppASGStack.Outputs.AppServerASGName
+
+  ## S3 + CloudFront
+  S3CloudFrontStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${BucketName}.s3.${AWS::Region}.amazonaws.com/s3-cloudfront.yaml
+      Parameters:
+        DomainName: !Ref DomainName
+        CertificateArn: !Ref CertificateArn
+
+Outputs:
+  VPCId:
+    Value: !GetAtt VPCStack.Outputs.VPCId
+  NLBDNSName:
+    Value: !GetAtt LoadBalancerStack.Outputs.NLBEndpoint
+  AppASGName:
+    Value: !GetAtt AppASGStack.Outputs.ASGName
+  RDSPrimaryEndpoint:
+    Value: !GetAtt RDSStack.Outputs.RDSPrimaryEndpoint
+  StaticAssetsBucketName:
+    Value: !GetAtt S3CloudFrontStack.Outputs.StaticAssetsBucketName
+  CloudFrontDistributionId:
+    Value: !GetAtt S3CloudFrontStack.Outputs.CloudFrontDistributionId
+  CloudFrontDomainName:
+    Value: !GetAtt S3CloudFrontStack.Outputs.CloudFrontDomainName

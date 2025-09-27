@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 instances (SSM host + App Server ASG)
+
+Parameters:
+  VPCId:
+    Type: String
+    Description: VPC ID
+
+  PublicSubnet1Id:
+    Type: String
+  PublicSubnet2Id:
+    Type: String
+  PrivateSubnet1Id:
+    Type: String
+  PrivateSubnet2Id:
+    Type: String
+
+  SSMHostSGId:
+    Type: String
+  AppSGId:
+    Type: String
+
+  InstanceType:        # <--- new
+    Type: String
+    Default: t3.micro
+    Description: EC2 Instance type for App Server
+
+  RDSPrimaryEndpoint:  # <--- new
+    Type: String
+    Description: Primary RDS endpoint for application
+
+Resources:
+  ## IAM Role for EC2 SSM
+  EC2SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: "/"
+      Tags:
+        - Key: Name
+          Value: EC2-SSM-Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2SSMRole
+      Path: "/"
+
+  ## SSM Host in Public Subnet
+  SSMHostInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet1Id
+      SecurityGroupIds:
+        - !Ref SSMHostSGId
+      Tags:
+        - Key: Name
+          Value: SSM-Host
+
+  ## Launch Template for Application Server
+  AppServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref AppSGId
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd
+            systemctl enable httpd
+            systemctl start httpd
+            echo "Hello from App Server" > /var/www/html/index.html
+            echo "DB_ENDPOINT=${RDSPrimaryEndpoint}" >> /etc/environment
+      LaunchTemplateName: AppServerTemplate
+
+  ## Auto Scaling Group for App Server
+  AppServerASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppServerLaunchTemplate
+        Version: !GetAtt AppServerLaunchTemplate.LatestVersionNumber
+      MinSize: 2
+      MaxSize: 4
+      DesiredCapacity: 2
+      Tags:
+        - Key: Name
+          Value: App-Server
+          PropagateAtLaunch: true
+
+Outputs:
+  SSMHostInstanceId:
+    Value: !Ref SSMHostInstance
+    Export:
+      Name: SSMHostInstanceId
+
+  AppServerASGName:
+    Value: !Ref AppServerASG
+    Export:
+      Name: AppServerASGName

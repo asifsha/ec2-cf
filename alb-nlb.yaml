@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Network Load Balancer for App Servers
+
+Parameters:
+  VPCId:
+    Type: String
+
+  PublicSubnet1Id:
+    Type: String
+  PublicSubnet2Id:
+    Type: String
+
+  NLBSGId:
+    Type: String
+
+  AppServerASGName:
+    Type: String
+
+Resources:
+  ## Network Load Balancer
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyApp-NLB
+      Type: network
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1Id
+        - !Ref PublicSubnet2Id
+      SecurityGroups:
+        - !Ref NLBSGId
+      Tags:
+        - Key: Name
+          Value: MyApp-NLB
+
+  ## Target Group for App Servers
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: App-TG
+      Port: 80
+      Protocol: TCP
+      VpcId: !Ref VPCId
+      TargetType: instance
+      HealthCheckProtocol: TCP
+      HealthCheckPort: "80"
+
+  ## Attach ASG to Target Group
+  ASGTargetGroupAttachment:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref AppServerASGName
+      LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+      DefaultResult: CONTINUE
+      HeartbeatTimeout: 300
+    DependsOn: AppTargetGroup
+
+  ## Listener for HTTP
+  NLBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  ## Listener for HTTPS (optional, requires cert in ACM)
+  NLBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref NLB
+      Port: 443
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+Outputs:
+  NLBEndpoint:
+    Value: !GetAtt NLB.DNSName
+    Export:
+      Name: NLBEndpoint
+
+  AppTargetGroupArn:
+    Value: !Ref AppTargetGroup
+    Export:
+      Name: AppTargetGroupArn
