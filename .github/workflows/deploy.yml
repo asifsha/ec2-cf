@@ -69,7 +69,7 @@ jobs:
       - name: Deploy CloudFormation stack
         run: |
           set -e
-          STACK_NAME=MyAppStack
+          STACK_NAME=ec2AppStack
 
           # Check if stack exists
           if aws cloudformation describe-stacks --stack-name $STACK_NAME >/dev/null 2>&1; then

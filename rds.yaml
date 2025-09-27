@@ -51,7 +51,6 @@ Resources:
   ## Primary MariaDB Instance
   RDSPrimary:
     Type: AWS::RDS::DBInstance
-    DeletionPolicy: Retain
     Properties:
       DBInstanceIdentifier: !Sub "${AWS::StackName}-mariadb-primary"
       DBName: MyAppDB
